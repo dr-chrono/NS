@@ -7,10 +7,7 @@
 // @match        https://www.torn.com/factions.php*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=torn.com
 // @run-at       document-idle
-// @grant        GM_info
-// @grant        GM_setValue
-// @grant        GM_getValue
-// @grant        GM_xmlhttpRequest
+// @grant        none
 // @license      MIT
 // ==/UserScript==
 
@@ -143,10 +140,49 @@
       "Muscle #1": 20,
       "Driver": 7,
     },
+    "Manifest Cruelty": {
+      "Hacker": 16,
+      "Interrogator": 25,
+      "Reviver": 45,
+      "Cat Burglar": 14,
+    },
+    "Gone Fission": {
+      "Hijacker": 28,
+      "Engineer": 18,
+      "Pickpocket": 10,
+      "Imitator": 28,
+      "Bomber": 17,
+    },
+    "Crane Reaction": {
+      "Sniper":35,
+      "Lookout": 18,
+      "Engineer": 10,
+      "Bomber": 18,
+      "Muscle #1":12,
+      "Muscle #2":7,
+    },
+    "Lock Stock": {
+      "Assassin": 43,
+      "Smuggler": 23,
+      "Hacker": 21,
+      "Muscle #1": 7,
+      "Muscle #2": 7,
+    },
+    "Hostile Takeover": {
+      "Hacker": 21,
+      "Engineer": 13,
+      "Cat Burglar": 19,
+      "Kidnapper": 10,
+      "Negotiator": 27,
+      "Muscle": 10,
+    },
   };
 
-  /** HIDE THESE OCs COMPLETELY **/
-  const HIDE_OC_NAMES = new Set(["Manifest Cruelty"]);
+  /** HIDE THESE OCs COMPLETELY (currently none — kept for future use) **/
+  const HIDE_OC_NAMES = new Set([]);
+
+  /** SHOW + COLOR CODE THESE OCs NORMALLY, BUT FORCE-DISABLE JOINING **/
+  const FORCE_DISABLE_JOIN_NAMES = new Set(["Manifest Cruelty"]);
 
   /* =========================================================================
    * SECTION B — Role success-chance thresholds (from "NS2 Edition" script)
@@ -308,32 +344,32 @@
     if (document.getElementById(STYLE_ID)) return;
     const css = `
       .oc-weight-box {
-        margin-top: 6px;
-        padding: 6px;
-        text-align: center;
+        margin-top: 4px;
+        padding: 2px 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        line-height: 1.4;
         border: 1px solid rgba(255,255,255,0.15);
-        border-radius: 6px;
+        border-radius: 4px;
         background: rgba(255,255,255,0.03);
       }
       .oc-weight-box .label {
-        display: block;
-        font-size: 11px;
+        font-size: 10px;
         text-transform: uppercase;
-        letter-spacing: .05em;
-        opacity: .8;
-        padding-bottom: 3px;
-        margin-bottom: 4px;
-        border-bottom: 1px solid rgba(255,255,255,0.2);
+        letter-spacing: .04em;
+        opacity: .75;
+        padding-right: 6px;
+        border-right: 1px solid rgba(255,255,255,0.25);
       }
       .oc-weight-box .value {
-        display: block;
-        font-size: 16px;
+        font-size: 12px;
         font-weight: 700;
-        margin-top: 2px;
       }
       .oc-urgent {
         border: 2px solid #ffea00 !important;
-        box-shadow: 0 0 8px rgba(FF,EA,00,0.6);
+        box-shadow: 0 0 8px rgba(255, 234, 0, 0.6);
       }
       .oc-needed-text { color: #ff4d4d; font-weight: bold; margin-top: 4px; }
       .oc-mine {
@@ -420,7 +456,7 @@
     if (!text) return null;
     const t = String(text).trim().toLowerCase();
 
-    const hrsShort = t.match(/(\d+(?:\.\d+)?)\s*hr?s\b/);
+    const hrsShort = t.match(/(\d+(?:\.\d+)?)\s*hrs?\b/);
     if (hrsShort) return parseFloat(hrsShort[1]);
 
     const days = t.match(/(\d+(?:\.\d+)?)\s*day?s?\b/);
@@ -451,6 +487,8 @@
     if (visible) {
       const txt = (visible.textContent || "").trim();
       if (txt && /stalled/i.test(txt)) return Infinity;
+      const parsedVisible = parseDurationHours(txt);
+      if (parsedVisible != null) return parsedVisible;
     }
 
     return null;
@@ -499,7 +537,7 @@
 
   function updateUrgentMarker(ocRoot, hours) {
     const isFiniteHours = Number.isFinite(hours);
-    const urgent = isFiniteHours && hours <= 48 && hours >= 0;
+    const urgent = isFiniteHours && hours <= 24 && hours >= 0;
     ocRoot.classList.toggle("oc-urgent", urgent);
 
     const titleEl = q('[class^="panelTitle___"]', ocRoot);
@@ -550,10 +588,7 @@
       const weight = weights[roleName];
       const box = document.createElement("div");
       box.className = "oc-weight-box";
-      box.innerHTML = `
-        <span class="label">Weight</span>
-        <span class="value">${weight}%</span>
-      `;
+      box.innerHTML = `<span class="label">Weight</span><span class="value">${weight}%</span>`;
       role.appendChild(box);
     }
   }
@@ -561,11 +596,40 @@
   /* =========================================================================
    * Role success-chance color coding (from NS2 Edition script)
    * ========================================================================= */
-  function processScenario(panel) {
-    if (panel.classList.contains("role-processed")) return;
-    panel.classList.add("role-processed");
 
+  // Match a role name from ocRoles' Positions object against the raw
+  // displayed role text, ignoring case/whitespace differences between the
+  // two (ocRoles uses e.g. "MUSCLE #1", the page may render "Muscle #1").
+  function getRequiredForRole(positions, rawRole) {
+    if (typeof positions === "string" && positions.startsWith("default_")) {
+      return parseInt(positions.split("_")[1], 10);
+    }
+    if (positions && typeof positions === "object") {
+      const target = rawRole.trim().toUpperCase();
+      for (const key of Object.keys(positions)) {
+        if (key.trim().toUpperCase() === target) return positions[key];
+      }
+    }
+    return null;
+  }
+
+  // Find the join button without depending on exact class ORDER (Torn's
+  // hashed class names can be reshuffled harmlessly) - just require that
+  // the button's class list contains both "torn-btn" and a class starting
+  // with "joinButton" somewhere.
+  function findJoinButton(slot) {
+    const buttons = slot.querySelectorAll("button");
+    for (const b of buttons) {
+      const classes = (b.className || "").toString();
+      if (/\btorn-btn\b/.test(classes) && /\bjoinButton/.test(classes)) return b;
+    }
+    return null;
+  }
+
+  function processScenario(panel) {
     const ocName = getOCName(panel) || "Unknown";
+    const forceDisable = FORCE_DISABLE_JOIN_NAMES.has(ocName);
+    const ocData = ocRoles.find((o) => o.OCName.toLowerCase() === ocName.toLowerCase());
     const slots = qa('[class^="contentLayer___"] > [class^="wrapper___"] > [class^="wrapper___"]', panel);
 
     slots.forEach((slot) => {
@@ -575,31 +639,53 @@
 
       const rawRole = roleElem.innerText.trim();
       const successChance = parseInt(chanceElem.textContent.trim(), 10) || 0;
-      const joinBtn = slot.querySelector("button[class^='torn-btn joinButton']");
+      const joinBtn = findJoinButton(slot);
 
-      const ocData = ocRoles.find((o) => o.OCName.toLowerCase() === ocName.toLowerCase());
-      let required = null;
-      if (ocData) {
-        if (typeof ocData.Positions === "string" && ocData.Positions.startsWith("default_")) {
-          required = parseInt(ocData.Positions.split("_")[1], 10);
-        } else if (typeof ocData.Positions === "object" && ocData.Positions[rawRole] !== undefined) {
-          required = ocData.Positions[rawRole];
-        }
-      }
-      if (required === null) return;
+      const required = ocData ? getRequiredForRole(ocData.Positions, rawRole) : null;
+
+      // Still color-code and force-disable even if this OC has no configured
+      // thresholds, as long as it's in FORCE_DISABLE_JOIN_NAMES.
+      if (required === null && !forceDisable) return;
+
+      const belowThreshold = required !== null && successChance < required;
 
       const honorTexts = slot.querySelectorAll(".honor-text");
       const userName = honorTexts.length > 1 ? honorTexts[1].textContent.trim() : null;
 
       if (!userName) {
-        slot.style.backgroundColor = successChance < required ? "#ff000061" : "#21a61c61";
-        if (joinBtn && successChance < required) {
-          joinBtn.textContent = "DISABLED";
-          joinBtn.setAttribute("disabled", "");
+        const disableThisSlot = belowThreshold || forceDisable;
+        slot.style.backgroundColor = disableThisSlot ? "#ff000061" : "#21a61c61";
+
+        if (joinBtn) {
+          if (disableThisSlot) {
+            // Remember the button's original text/disabled state the first
+            // time we touch it, so we can put it back later if the chance
+            // improves (or Torn re-renders the same button element).
+            if (joinBtn.dataset.ocOrigText === undefined) {
+              joinBtn.dataset.ocOrigText = joinBtn.textContent;
+              joinBtn.dataset.ocOrigDisabled = joinBtn.disabled ? "true" : "false";
+            }
+            joinBtn.dataset.ocForcedDisabled = "true";
+            joinBtn.textContent = "DISABLED";
+            joinBtn.setAttribute("disabled", "");
+          } else if (joinBtn.dataset.ocForcedDisabled === "true") {
+            // We previously disabled this button ourselves - restore it.
+            joinBtn.textContent = joinBtn.dataset.ocOrigText;
+            if (joinBtn.dataset.ocOrigDisabled === "false") {
+              joinBtn.removeAttribute("disabled");
+            }
+            delete joinBtn.dataset.ocForcedDisabled;
+          }
         }
-      } else if (successChance < required) {
+      } else if (belowThreshold) {
         slot.style.outline = "4px solid red";
         slot.style.outlineOffset = "0px";
+      } else {
+        // Clear any outline we previously applied if the chance improved.
+        if (slot.style.outline) {
+          slot.style.outline = "";
+          slot.style.outlineOffset = "";
+        }
       }
     });
   }
@@ -657,6 +743,8 @@
           // Role success-chance color coding (script 2)
           processScenario(ocRoot);
 
+          const forceDisable = FORCE_DISABLE_JOIN_NAMES.has(getOCName(ocRoot) || "");
+
           if (DEBUG) {
             const name = getOCName(ocRoot) || "(unknown)";
             console.log(
@@ -671,7 +759,7 @@
             );
           }
 
-          return { ocRoot, hours, hasMe };
+          return { ocRoot, hours, hasMe, forceDisable };
         })
         .filter(Boolean);
 
@@ -679,6 +767,9 @@
 
       if (!completedTab && !confirmOpen) {
         ocWithTimes.sort((a, b) => {
+          // Force-disabled (unjoinable) OCs always sink to the very bottom,
+          // regardless of urgency or whether you're already in them.
+          if (a.forceDisable !== b.forceDisable) return a.forceDisable ? 1 : -1;
           if (a.hasMe !== b.hasMe) return b.hasMe - a.hasMe;
           return a.hours - b.hours;
         });
