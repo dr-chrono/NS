@@ -1,0 +1,702 @@
+// ==UserScript==
+// @name         Torn OCs - NS2 Edition
+// @namespace    TornOCCombined
+// @author       DrChrono (combo of Qfiffle (based on JohnNash's script) + Tux (based on NotIbbyz's script) scripts)
+// @version      1.0.0
+// @description  Merges "Role Weights and Time Remaining to Plan" (weight boxes, needed-in-Xh highlighting/sorting, hide/mine highlighting) with "OC Role Display" (per-role success-chance color coding + join-button disabling).
+// @match        https://www.torn.com/factions.php*
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=torn.com
+// @run-at       document-idle
+// @grant        GM_info
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_xmlhttpRequest
+// @license      MIT
+// ==/UserScript==
+
+(function () {
+  "use strict";
+
+  console.log("[OC combined] loaded:", location.href);
+
+  /* =========================================================================
+   * SECTION A — Weight config (from "Role Weights and Time Remaining" script)
+   * ========================================================================= */
+  const WEIGHT_CONFIG = {
+    "Mob Mentality": {
+      "Looter 1": 34,
+      "Looter 2": 26,
+      "Looter 4": 23,
+      "Looter 3": 18,
+    },
+    "Pet Project": {},
+    "Cash Me If You Can": {
+      "Thief 1": 50,
+      "Lookout": 28,
+      "Thief 2": 22,
+    },
+    "Best of the Lot": {},
+    "Smoke and Wing Mirrors": {
+      "Car Thief": 50,
+      "Imitator": 24,
+      "Hustler #2": 17,
+      "Hustler #1": 9,
+    },
+    "Market Forces": {
+      "Enforcer": 24,
+      "Negotiator": 22,
+      "Muscle": 20,
+      "Lookout": 15,
+      "Arsonist": 4,
+    },
+    "Gaslight the Way": {
+      "Imitator #3": 42,
+      "Imitator #2": 27,
+      "Looter #3": 13,
+      "Imitator #1": 9,
+      "Looter #1": 9,
+      "Looter #2": 0,
+    },
+    "Snow Blind": {
+      "Hustler": 50,
+      "Impersonator": 31,
+      "Muscle #1": 10,
+      "Muscle #2": 10,
+    },
+    "Stage Fright": {
+      "Sniper": 44,
+      "Muscle #1": 21,
+      "Enforcer": 17,
+      "Muscle #3": 10,
+      "Lookout": 7,
+      "Muscle #2": 2,
+    },
+    "Leave No Trace": {
+      "Impersonator": 44,
+      "Negotiator": 30,
+      "Techie": 26,
+    },
+    "Counter Offer": {
+      "Robber": 50,
+      "Looter": 28,
+      "Hacker": 22,
+      "Picklock": 22,
+      "Engineer": 22,
+    },
+    "No Reserve": {
+      "Techie": 46,
+      "Engineer": 39,
+      "Car Thief": 39,
+    },
+    "Bidding War": {
+      "Robber #3": 28,
+      "Robber #2": 21,
+      "Driver": 18,
+      "Bomber #2": 16,
+      "Bomber #1": 9,
+      "Robber #1": 7,
+    },
+    "Honey Trap": {
+      "Muscle #2": 43,
+      "Muscle #1": 32,
+      "Enforcer": 25,
+    },
+    "Clinical Precision": {
+      "Imitator": 43,
+      "Cleaner": 22,
+      "Cat Burglar": 19,
+      "Assassin": 16,
+    },
+    "Blast from the Past": {
+      "Muscle": 36,
+      "Engineer": 25,
+      "Bomber": 19,
+      "Picklock #1": 10,
+      "Hacker": 9,
+      "Picklock #2": 2,
+    },
+    "Break the Bank": {
+      "Muscle #3": 32,
+      "Thief #2": 29,
+      "Muscle #1": 14,
+      "Robber": 13,
+      "Muscle #2": 11,
+      "Thief #1": 2,
+    },
+    "Stacking the Deck": {
+      "Imitator": 42,
+      "Cat Burglar": 29,
+      "Hacker": 25,
+      "Driver": 4,
+    },
+    "Window of Opportunity": {
+      "Engineer": 15.3,
+      "Looter #1": 23.6,
+      "Looter #2": 26.2,
+      "Muscle #1": 21.2,
+      "Muscle #2": 13.8,
+    },
+    "Ace in the Hole": {
+      "Hacker": 28,
+      "Imitator": 23,
+      "Muscle #2": 22,
+      "Muscle #1": 20,
+      "Driver": 7,
+    },
+  };
+
+  /** HIDE THESE OCs COMPLETELY **/
+  const HIDE_OC_NAMES = new Set(["Manifest Cruelty"]);
+
+  /* =========================================================================
+   * SECTION B — Role success-chance thresholds (from "NS2 Edition" script)
+   * ========================================================================= */
+  const defaultLevel7 = 75;
+  const defaultLevel6 = 75;
+  const defaultLevel5 = 75;
+  const defaultLevel4 = 75;
+  const defaultLevel3 = 75;
+  const defaultLevel2 = 75;
+  const defaultDecline = 700;
+
+  const ocRoles = [
+    {
+      // Level 10 Elaborate
+      OCName: "Crane Reaction",
+      Positions: {
+        "SNIPER": 99,
+        "LOOKOUT": 99,
+        "BOMBER": 99,
+        "MUSCLE #1": 99,
+        "ENGINEER": 99,
+        "MUSCLE #2": 99,
+      },
+    },
+    {
+      // Level 9 Elaborate
+      OCName: "Gone Fission",
+      Positions: {
+        "HIJACKER": 65,
+        "IMITATOR": 65,
+        "BOMBER": 65,
+        "PICKPOCKET": 65,
+        "ENGINEER": 65,
+      },
+    },
+    {
+      // Level 9 Elaborate
+      OCName: "Ace in the Hole",
+      Positions: {
+        "HACKER": 65,
+        "MUSCLE #2": 65,
+        "IMITATOR": 65,
+        "MUSCLE #1": 65,
+        "DRIVER": 65,
+      },
+    },
+    {
+      // Level 9 Elaborate
+      OCName: "Hostile Takeover",
+      Positions: {
+        "NEGOTIATOR": 65,
+        "KIDNAPPER": 65,
+        "HACKER": 65,
+        "MUSCLE": 65,
+        "ENGINEER": 65,
+        "CAT BURGLAR": 65,
+      },
+    },
+    {
+      // Level 8 Elaborate
+      OCName: "Manifest Cruelty",
+      Positions: {
+        "REVIVER": 99,
+        "INTERROGATOR": 99,
+        "HACKER": 99,
+        "CAT BURGLAR": 99,
+      },
+    },
+    {
+      // Level 8 Elaborate
+      OCName: "Stacking the Deck",
+      Positions: {
+        "IMITATOR": 70,
+        "HACKER": 70,
+        "CAT BURGLAR": 70,
+        "DRIVER": 70,
+      },
+    },
+    {
+      // Level 8 Elaborate
+      OCName: "Lock Stock",
+      Positions: {
+        "ASSASSIN": 70,
+        "HACKER": 70,
+        "MUSCLE #1": 70,
+        "MUSCLE #2": 70,
+        "SMUGGLER": 70,
+      },
+    },
+    {
+      // Level 8 Advanced
+      OCName: "Break the Bank",
+      Positions: {
+        "MUSCLE #3": 65,
+        "THIEF #2": 65,
+        "MUSCLE #1": 65,
+        "ROBBER": 65,
+        "MUSCLE #2": 65,
+        "THIEF #1": 65,
+      },
+    },
+    {
+      // Level 8 Advanced
+      OCName: "Clinical Precision",
+      Positions: {
+        "IMITATOR": 65,
+        "CLEANER": 65,
+        "CAT BURGLAR": 65,
+        "ASSASSIN": 65,
+      },
+    },
+    {
+      // Level 7 Advanced
+      OCName: "Blast From The Past",
+      Positions: {
+        "MUSCLE": 75,
+        "ENGINEER": 75,
+        "BOMBER": 75,
+        "HACKER": 75,
+        "PICKLOCK #1": 75,
+        "PICKLOCK #2": 75,
+      },
+    },
+    {
+      OCName: "Window of Opportunity",
+      Positions: {
+        "LOOTER #2": 75,
+        "MUSCLE #1": 75,
+        "LOOTER #1": 75,
+        "MUSCLE #2": 75,
+        "ENGINEER": 75,
+      },
+    },
+    { OCName: "Bidding War", Positions: `default_${defaultLevel6}` },
+    { OCName: "Honey Trap", Positions: `default_${defaultLevel5}` },
+    { OCName: "Leave No Trace", Positions: `default_${defaultLevel6}` },
+    { OCName: "Stage Fright", Positions: `default_${defaultLevel4}` },
+    { OCName: "Snow Blind", Positions: `default_${defaultLevel4}` },
+    { OCName: "Pet Project", Positions: `default_${defaultLevel2}` },
+    { OCName: "Cash Me If You Can", Positions: `default_${defaultLevel2}` },
+    { OCName: "Smoke and Wing Mirrors", Positions: `default_${defaultLevel2}` },
+    { OCName: "Market Forces", Positions: `default_${defaultLevel2}` },
+    { OCName: "Guardian Ángels", Positions: `default_${defaultLevel5}` },
+    { OCName: "No Reserve", Positions: `default_${defaultLevel5}` },
+  ];
+
+  /* =========================================================================
+   * SHARED HELPERS
+   * ========================================================================= */
+  const q = (s, r = document) => r.querySelector(s);
+  const qa = (s, r = document) => Array.from(r.querySelectorAll(s));
+
+  const DEBUG = false;
+
+  /** STYLES (weight boxes / urgency / mine highlight) **/
+  const STYLE_ID = "oc-weights-style";
+  function injectStyles() {
+    if (document.getElementById(STYLE_ID)) return;
+    const css = `
+      .oc-weight-box {
+        margin-top: 6px;
+        padding: 6px;
+        text-align: center;
+        border: 1px solid rgba(255,255,255,0.15);
+        border-radius: 6px;
+        background: rgba(255,255,255,0.03);
+      }
+      .oc-weight-box .label {
+        display: block;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: .05em;
+        opacity: .8;
+        padding-bottom: 3px;
+        margin-bottom: 4px;
+        border-bottom: 1px solid rgba(255,255,255,0.2);
+      }
+      .oc-weight-box .value {
+        display: block;
+        font-size: 16px;
+        font-weight: 700;
+        margin-top: 2px;
+      }
+      .oc-urgent {
+        border: 2px solid #ffea00 !important;
+        box-shadow: 0 0 8px rgba(FF,EA,00,0.6);
+      }
+      .oc-needed-text { color: #ff4d4d; font-weight: bold; margin-top: 4px; }
+      .oc-mine {
+        outline: 2px solid rgba(255, 215, 0, 0.9);
+        box-shadow: 0 0 10px rgba(255, 215, 0, 0.35);
+        border-radius: 6px;
+      }
+    `;
+    const st = document.createElement("style");
+    st.id = STYLE_ID;
+    st.textContent = css;
+    document.head.appendChild(st);
+  }
+
+  // Weak cache for expensive calculations
+  const HOURS_CACHE = new WeakMap();
+
+  // Observer & scheduling
+  let obs = null;
+  let rafScheduled = false;
+
+  function getPlayerName() {
+    const s = document.querySelector("script[playername]");
+    if (s && s.getAttribute("playername")) {
+      return s.getAttribute("playername").trim();
+    }
+    return null;
+  }
+
+  function ocContainsPlayer(ocRoot, playerName) {
+    if (!playerName) return false;
+    const nodes = ocRoot.querySelectorAll("a, span, div");
+    for (const n of nodes) {
+      const t = (n.textContent || "").trim();
+      if (t === playerName) return true;
+    }
+    return false;
+  }
+
+  function getOCRootContainer() {
+    return document.getElementById("faction-crimes-root") || document.body;
+  }
+
+  function scheduleScan() {
+    if (rafScheduled) return;
+    rafScheduled = true;
+    requestAnimationFrame(() => {
+      rafScheduled = false;
+      scanPage();
+    });
+  }
+
+  function getOCName(ocRoot) {
+    const el = q('[class^="panelTitle___"]', ocRoot);
+    return el ? el.textContent.trim() : null;
+  }
+
+  function shouldHideOC(ocRoot) {
+    const name = getOCName(ocRoot);
+    return !!(name && HIDE_OC_NAMES.has(name));
+  }
+
+  function isCompletedTab(root) {
+    const spans = root.querySelectorAll('[class^="phase___"] [class^="title___"] span');
+    for (const s of spans) {
+      const t = (s.textContent || "").trim().toLowerCase();
+      if (t === "success" || t === "fail") return true;
+    }
+    return false;
+  }
+
+  function isLeaveConfirmOpen() {
+    return !!document.querySelector(
+      [
+        "#yesButton",
+        "#noButton",
+        '[aria-labelledby*="leaveConfirmationText"]',
+        '[class^="confirmButtons___"]',
+      ].join(",")
+    );
+  }
+
+  function parseDurationHours(text) {
+    if (!text) return null;
+    const t = String(text).trim().toLowerCase();
+
+    const hrsShort = t.match(/(\d+(?:\.\d+)?)\s*hr?s\b/);
+    if (hrsShort) return parseFloat(hrsShort[1]);
+
+    const days = t.match(/(\d+(?:\.\d+)?)\s*day?s?\b/);
+    const hours = t.match(/(\d+(?:\.\d+)?)\s*hour?s?\b/);
+    const minutes = t.match(/(\d+(?:\.\d+)?)\s*minute?s?\b/);
+    const seconds = t.match(/(\d+(?:\.\d+)?)\s*second?s?\b/);
+
+    const d = days ? parseFloat(days[1]) : 0;
+    const h = hours ? parseFloat(hours[1]) : 0;
+    const m = minutes ? parseFloat(minutes[1]) : 0;
+    const s = seconds ? parseFloat(seconds[1]) : 0;
+
+    if (!days && !hours && !minutes && !seconds) return null;
+
+    return d * 24 + h + m / 60 + s / 3600;
+  }
+
+  function getTimeUntilReadyHours(ocRoot) {
+    const title = ocRoot.querySelector('[class^="phase___"] [class^="title___"][aria-label]');
+    if (title) {
+      const label = (title.getAttribute("aria-label") || "").trim();
+      if (label && /stalled/i.test(label)) return Infinity;
+      const parsed = parseDurationHours(label);
+      if (parsed != null) return parsed;
+    }
+
+    const visible = ocRoot.querySelector('[class^="phase___"] [class^="title___"]');
+    if (visible) {
+      const txt = (visible.textContent || "").trim();
+      if (txt && /stalled/i.test(txt)) return Infinity;
+    }
+
+    return null;
+  }
+
+  function getEmptySlotsPlanningHours(ocRoot) {
+    const slots = qa('[class^="slotBody___"]', ocRoot);
+    let total = 0;
+    let emptyCount = 0;
+
+    for (const s of slots) {
+      const join = s.querySelector('[class^="joinContainer___"]');
+      if (!join) continue;
+
+      emptyCount++;
+
+      const pt = join.querySelector('[class^="planningTime___"][aria-label]');
+      const label = pt ? pt.getAttribute("aria-label") : null;
+      const hours = parseDurationHours(label) ?? 24;
+      total += hours;
+    }
+
+    return { emptyCount, totalHours: total };
+  }
+
+  function calculateTimeUntilNeeded(ocRoot) {
+    const { emptyCount, totalHours: emptyHours } = getEmptySlotsPlanningHours(ocRoot);
+    if (emptyCount === 0) return Infinity;
+
+    const readyHours = getTimeUntilReadyHours(ocRoot);
+
+    if (readyHours == null) return 0;
+    if (!isFinite(readyHours)) return 0;
+
+    return Math.max(0, readyHours - emptyHours);
+  }
+
+  function calculateTimeUntilNeededCached(ocRoot) {
+    const now = performance.now();
+    const cached = HOURS_CACHE.get(ocRoot);
+    if (cached && now - cached.t < 250) return cached.v;
+    const v = calculateTimeUntilNeeded(ocRoot);
+    HOURS_CACHE.set(ocRoot, { v, t: now });
+    return v;
+  }
+
+  function updateUrgentMarker(ocRoot, hours) {
+    const isFiniteHours = Number.isFinite(hours);
+    const urgent = isFiniteHours && hours <= 48 && hours >= 0;
+    ocRoot.classList.toggle("oc-urgent", urgent);
+
+    const titleEl = q('[class^="panelTitle___"]', ocRoot);
+    if (!titleEl) return;
+
+    let neededEl = q(".oc-needed-text", ocRoot);
+
+    if (!isFiniteHours) {
+      if (neededEl) {
+        neededEl.remove();
+        delete ocRoot.dataset.ocUrgencyText;
+      }
+      return;
+    }
+
+    if (!neededEl) {
+      neededEl = document.createElement("div");
+      neededEl.className = "oc-needed-text";
+      titleEl.insertAdjacentElement("afterend", neededEl);
+    }
+
+    const display = `Needed in ${(Math.round(hours * 10) / 10).toFixed(1)}h`;
+
+    if (ocRoot.dataset.ocUrgencyText !== display) {
+      neededEl.textContent = display;
+      ocRoot.dataset.ocUrgencyText = display;
+    }
+  }
+
+  function addWeightBoxes(ocRoot) {
+    const ocName = getOCName(ocRoot);
+    if (!ocName) return;
+
+    const weights = WEIGHT_CONFIG[ocName];
+    if (!weights) return;
+
+    const roles = qa('[class^="slotHeader___"]', ocRoot).map((header) => header.parentElement);
+
+    for (const role of roles) {
+      if (!role || role.querySelector(".oc-weight-box")) continue;
+
+      const roleName = (
+        role.querySelector('[class^="slotHeader___"] [class^="title___"]')?.textContent || ""
+      ).trim();
+
+      if (weights[roleName] == null) continue;
+
+      const weight = weights[roleName];
+      const box = document.createElement("div");
+      box.className = "oc-weight-box";
+      box.innerHTML = `
+        <span class="label">Weight</span>
+        <span class="value">${weight}%</span>
+      `;
+      role.appendChild(box);
+    }
+  }
+
+  /* =========================================================================
+   * Role success-chance color coding (from NS2 Edition script)
+   * ========================================================================= */
+  function processScenario(panel) {
+    if (panel.classList.contains("role-processed")) return;
+    panel.classList.add("role-processed");
+
+    const ocName = getOCName(panel) || "Unknown";
+    const slots = qa('[class^="contentLayer___"] > [class^="wrapper___"] > [class^="wrapper___"]', panel);
+
+    slots.forEach((slot) => {
+      const roleElem = slot.querySelector('[class^="title___"]');
+      const chanceElem = slot.querySelector('[class^="successChance___"]');
+      if (!roleElem || !chanceElem) return;
+
+      const rawRole = roleElem.innerText.trim();
+      const successChance = parseInt(chanceElem.textContent.trim(), 10) || 0;
+      const joinBtn = slot.querySelector("button[class^='torn-btn joinButton']");
+
+      const ocData = ocRoles.find((o) => o.OCName.toLowerCase() === ocName.toLowerCase());
+      let required = null;
+      if (ocData) {
+        if (typeof ocData.Positions === "string" && ocData.Positions.startsWith("default_")) {
+          required = parseInt(ocData.Positions.split("_")[1], 10);
+        } else if (typeof ocData.Positions === "object" && ocData.Positions[rawRole] !== undefined) {
+          required = ocData.Positions[rawRole];
+        }
+      }
+      if (required === null) return;
+
+      const honorTexts = slot.querySelectorAll(".honor-text");
+      const userName = honorTexts.length > 1 ? honorTexts[1].textContent.trim() : null;
+
+      if (!userName) {
+        slot.style.backgroundColor = successChance < required ? "#ff000061" : "#21a61c61";
+        if (joinBtn && successChance < required) {
+          joinBtn.textContent = "DISABLED";
+          joinBtn.setAttribute("disabled", "");
+        }
+      } else if (successChance < required) {
+        slot.style.outline = "4px solid red";
+        slot.style.outlineOffset = "0px";
+      }
+    });
+  }
+
+  /* =========================================================================
+   * Reorder helper (from Weights/Timing script)
+   * ========================================================================= */
+  function reorder(container, orderedNodes) {
+    const current = Array.from(container.children).filter((n) => n.matches("[data-oc-id]"));
+    for (let i = 0; i < orderedNodes.length; i++) {
+      const desired = orderedNodes[i];
+      if (current[i] !== desired) {
+        container.insertBefore(desired, current[i] || null);
+        const from = current.indexOf(desired);
+        if (from !== -1) current.splice(from, 1);
+        current.splice(i, 0, desired);
+      }
+    }
+  }
+
+  /* =========================================================================
+   * MAIN SCAN — runs both feature sets per OC, then sorts/reorders
+   * ========================================================================= */
+  function scanPage() {
+    if (obs) obs.disconnect();
+
+    try {
+      injectStyles();
+
+      const playerName = getPlayerName();
+      const root = getOCRootContainer();
+      const completedTab = isCompletedTab(root);
+
+      const ocs = qa("[data-oc-id]", root);
+
+      const ocWithTimes = ocs
+        .map((ocRoot) => {
+          if (shouldHideOC(ocRoot)) {
+            ocRoot.style.display = "none";
+            return null;
+          } else if (ocRoot.style.display === "none") {
+            ocRoot.style.display = "";
+          }
+
+          // Weight boxes + timing (script 1)
+          addWeightBoxes(ocRoot);
+          ocRoot.dataset.ocProcessed = "true";
+
+          const hours = calculateTimeUntilNeededCached(ocRoot);
+          updateUrgentMarker(ocRoot, hours);
+
+          const hasMe = ocContainsPlayer(ocRoot, playerName);
+          ocRoot.classList.toggle("oc-mine", hasMe);
+
+          // Role success-chance color coding (script 2)
+          processScenario(ocRoot);
+
+          if (DEBUG) {
+            const name = getOCName(ocRoot) || "(unknown)";
+            console.log(
+              "OC:",
+              name,
+              "Needed in:",
+              isFinite(hours) ? hours.toFixed(2) + "h" : "∞",
+              "HasMe:",
+              hasMe,
+              "CompletedTab:",
+              completedTab
+            );
+          }
+
+          return { ocRoot, hours, hasMe };
+        })
+        .filter(Boolean);
+
+      const confirmOpen = isLeaveConfirmOpen();
+
+      if (!completedTab && !confirmOpen) {
+        ocWithTimes.sort((a, b) => {
+          if (a.hasMe !== b.hasMe) return b.hasMe - a.hasMe;
+          return a.hours - b.hours;
+        });
+
+        const container = ocs[0]?.parentNode;
+        if (container) reorder(container, ocWithTimes.map((x) => x.ocRoot));
+      } else if (DEBUG) {
+        console.log("OC script: skipping reorder.", { completedTab, confirmOpen });
+      }
+    } finally {
+      const root = getOCRootContainer();
+      obs && obs.observe(root, { childList: true, subtree: true });
+    }
+  }
+
+  // Initialize observer
+  obs = new MutationObserver(() => scheduleScan());
+
+  scheduleScan();
+  obs.observe(getOCRootContainer(), { childList: true, subtree: true });
+})();
